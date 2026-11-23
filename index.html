@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AquaScan — Water Trash Detector</title>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+<style>
+  :root {
+    --bg: #071923;
+    --panel: #0d2736;
+    --panel-2: #123447;
+    --accent: #14b8a6;
+    --accent-bright: #2dd4bf;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --text: #ecfeff;
+    --muted: #99c2cf;
+    --border: rgba(45, 212, 191, 0.22);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: linear-gradient(180deg, #05121a 0%, var(--bg) 55%, #092130 100%);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 16px;
+  }
+  .container {
+    max-width: 920px;
+    margin: 0 auto;
+  }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+  }
+  .brand h1 {
+    font-size: 1.4rem;
+    color: var(--accent-bright);
+    letter-spacing: 0.3px;
+  }
+  .brand p {
+    font-size: 0.88rem;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .badge {
+    background: rgba(20, 184, 166, 0.16);
+    border: 1px solid var(--accent);
+    color: var(--accent-bright);
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 0.82rem;
+    font-weight: 600;
+  }
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .stat-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 14px;
+    text-align: center;
+  }
+  .stat-value {
+    font-size: 1.65rem;
+    font-weight: 700;
+    color: var(--accent-bright);
+  }
+  .stat-label {
+    font-size: 0.82rem;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+  .main-grid {
+    display: grid;
+    grid-template-columns: 1.45fr 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 760px) {
+    .main-grid { grid-template-columns: 1fr; }
+    .stats-grid { grid-template-columns: 1fr; }
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 16px;
+  }
+  .card h2 {
+    font-size: 1.05rem;
+    margin-bottom: 10px;
+    color: var(--text);
+  }
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  button {
+    cursor: pointer;
+    border: none;
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    transition: transform 0.12s ease, opacity 0.15s ease;
+  }
+  button:active { transform: scale(0.98); }
+  .btn-primary {
+    background: var(--accent);
+    color: #042024;
+  }
+  .btn-secondary {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .btn-warn {
+    background: var(--warn);
+    color: #1f1300;
+  }
+  .btn-small {
+    padding: 6px 10px;
+    font-size: 0.78rem;
+  }
+  .viewport {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    background: #041017;
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  video, canvas.overlay {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .tank-sim {
+    display: none;
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(circle at 25% 20%, rgba(45, 212, 191, 0.14), transparent 45%),
+      linear-gradient(180deg, rgba(14, 116, 144, 0.35) 0%, rgba(7, 45, 66, 0.85) 100%);
+    overflow: hidden;
+  }
+  .tank-sim.active { display: block; }
+  .ripple {
+    position: absolute;
+    border: 1px solid rgba(153, 246, 228, 0.25);
+    border-radius: 50%;
+    animation: pulseRipple 3.5s infinite ease-out;
+    pointer-events: none;
+  }
+  @keyframes pulseRipple {
+    0% { transform: scale(0.4); opacity: 0.7; }
+    100% { transform: scale(2.4); opacity: 0; }
+  }
+  .trash-item {
+    position: absolute;
+    background: rgba(13, 39, 54, 0.92);
+    border: 2px solid var(--warn);
+    border-radius: 10px;
+    padding: 6px 10px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #fef3c7;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+    cursor: pointer;
+    user-select: none;
+  }
+  .trash-item span.tag {
+    display: block;
+    font-size: 0.68rem;
+    color: var(--accent-bright);
+  }
+  .status-bar {
+    margin-top: 10px;
+    font-size: 0.84rem;
+    color: var(--muted);
+    min-height: 20px;
+  }
+  .log-list {
+    list-style: none;
+    max-height: 290px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .log-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 9px 12px;
+    font-size: 0.84rem;
+  }
+  .log-meta { color: var(--muted); font-size: 0.75rem; }
+  .report-box {
+    margin-top: 12px;
+    width: 100%;
+    min-height: 92px;
+    background: #05131b;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px;
+    font-size: 0.8rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="brand">
+        <h1>AquaScan — Water Trash Detector</h1>
+        <p>Class 6 Science Exhibition Prototype • Scan, Spot &amp; Log Floating Waste</p>
+      </div>
+      <div class="badge" id="modelStatus">AI Model: Ready in Demo / Loading on Camera</div>
+    </header>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-value" id="spottedCount">0</div>
+        <div class="stat-label">Items Spotted</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="collectedCount">0</div>
+        <div class="stat-label">Items Picked Up</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="healthScore">100%</div>
+        <div class="stat-label">Water Body Health Score</div>
+      </div>
+    </div>
+
+    <div class="main-grid">
+      <div class="card">
+        <h2>Scanner View</h2>
+        <div class="controls">
+          <button class="btn-primary" id="startCamBtn" onclick="startCamera()">Start Camera Scan</button>
+          <button class="btn-secondary" id="demoModeBtn" onclick="toggleDemoMode()">Table Demo Mode</button>
+          <button class="btn-warn btn-small" id="spawnTrashBtn" onclick="spawnDemoTrash()" style="display:none;">+ Drop Trash in Tank</button>
+        </div>
+
+        <div class="viewport" id="viewport">
+          <video id="video" playsinline muted></video>
+          <canvas class="overlay" id="overlay"></canvas>
+          <div class="tank-sim active" id="tankSim">
+            <div class="ripple" style="width:90px;height:90px;top:25%;left:20%;"></div>
+            <div class="ripple" style="width:120px;height:120px;top:55%;left:55%;animation-delay:1.2s;"></div>
+          </div>
+        </div>
+
+        <div class="status-bar" id="statusBar">
+          Table Demo Mode active: click any floating waste item in the water tank to pick it up and log it.
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Scientist's Field Log</h2>
+        <div class="controls">
+          <button class="btn-secondary btn-small" onclick="exportReport()">Export Report</button>
+          <button class="btn-secondary btn-small" onclick="resetLog()">Reset</button>
+        </div>
+        <ul class="log-list" id="logList">
+          <li class="log-item">
+            <div>
+              <div>No items logged yet</div>
+              <div class="log-meta">Spot or pick up trash to record cleanup data</div>
+            </div>
+          </li>
+        </ul>
+        <textarea class="report-box" id="reportBox" readonly placeholder="Click 'Export Report' to generate a summary for your science project file or judges..."></textarea>
+      </div>
+    </div>
+  </div>
+
+<script>
+const WASTE_LABELS = new Set(["bottle", "cup", "wine glass", "can", "fork", "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange", "book", "cell phone", "backpack", "handbag", "umbrella"]);
+const SAMPLE_TRASH = [
+  { name: "Plastic Bottle", confidence: "94%", zone: "Surface Edge" },
+  { name: "Snack Wrapper / Cup", confidence: "89%", zone: "Mid-Tank" },
+  { name: "Aluminum Can", confidence: "92%", zone: "Near Bank" },
+  { name: "Plastic Bag / Sheet", confidence: "87%", zone: "Shallow Current" }
+];
+
+let model = null;
+let stream = null;
+let scanning = false;
+let demoMode = true;
+let spotted = 0;
+let collected = 0;
+let logs = [];
+let seenKeys = new Set();
+
+const video = document.getElementById("video");
+const overlay = document.getElementById("overlay");
+const ctx = overlay.getContext("2d");
+const tankSim = document.getElementById("tankSim");
+const statusBar = document.getElementById("statusBar");
+const modelStatus = document.getElementById("modelStatus");
+
+function playBeep() {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioCtx();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = 740;
+    gain.gain.value = 0.06;
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    setTimeout(() => { osc.stop(); audioCtx.close(); }, 130);
+  } catch (e) {}
+}
+
+function updateStats() {
+  document.getElementById("spottedCount").textContent = spotted;
+  document.getElementById("collectedCount").textContent = collected;
+  const uncollected = Math.max(0, spotted - collected);
+  const score = Math.max(10, 100 - uncollected * 8);
+  document.getElementById("healthScore").textContent = score + "%";
+}
+
+function renderLogs() {
+  const list = document.getElementById("logList");
+  if (logs.length === 0) {
+    list.innerHTML = `<li class="log-item"><div><div>No items logged yet</div><div class="log-meta">Spot or pick up trash to record cleanup data</div></div></li>`;
+    return;
+  }
+  list.innerHTML = logs.slice().reverse().map(item => `
+    <li class="log-item">
+      <div>
+        <div><strong>${item.name}</strong> (${item.status})</div>
+        <div class="log-meta">${item.zone} • Confidence: ${item.confidence} • ${item.time}</div>
+      </div>
+    </li>
+  `).join("");
+}
+
+function addLog(name, confidence, zone, status) {
+  const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  logs.push({ name, confidence, zone, status, time });
+  renderLogs();
+  updateStats();
+}
+
+function spawnDemoTrash() {
+  const sample = SAMPLE_TRASH[Math.floor(Math.random() * SAMPLE_TRASH.length)];
+  const el = document.createElement("div");
+  el.className = "trash-item";
+  const left = 12 + Math.random() * 64;
+  const top = 16 + Math.random() * 62;
+  el.style.left = left + "%";
+  el.style.top = top + "%";
+  el.innerHTML = `<span class="tag">DETECTED • ${sample.confidence}</span>${sample.name} <small>(Tap to pick up)</small>`;
+
+  spotted += 1;
+  playBeep();
+  addLog(sample.name, sample.confidence, sample.zone, "Spotted");
+  statusBar.textContent = `Alert: ${sample.name} detected in ${sample.zone}. Tap item to pick up.`;
+
+  el.addEventListener("click", () => {
+    collected += 1;
+    addLog(sample.name, sample.confidence, sample.zone, "Picked Up");
+    statusBar.textContent = `Collected ${sample.name}! Water Body Health Score updated.`;
+    el.remove();
+  });
+
+  tankSim.appendChild(el);
+}
+
+function toggleDemoMode() {
+  stopCamera();
+  demoMode = true;
+  tankSim.classList.add("active");
+  document.getElementById("spawnTrashBtn").style.display = "inline-block";
+  statusBar.textContent = "Table Demo Mode active: drop or tap trash items in the water tank.";
+  if (tankSim.querySelectorAll(".trash-item").length === 0) {
+    spawnDemoTrash();
+    spawnDemoTrash();
+  }
+}
+
+function stopCamera() {
+  scanning = false;
+  if (stream) {
+    stream.getTracks().forEach(t => t.stop());
+    stream = null;
+  }
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+}
+
+async function startCamera() {
+  demoMode = false;
+  tankSim.classList.remove("active");
+  document.getElementById("spawnTrashBtn").style.display = "none";
+  statusBar.textContent = "Requesting camera access and loading AI object detector...";
+
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" } },
+      audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+
+    if (!model) {
+      modelStatus.textContent = "AI Model: Loading...";
+      model = await cocoSsd.load();
+      modelStatus.textContent = "AI Model: Active (COCO-SSD)";
+    }
+
+    scanning = true;
+    statusBar.textContent = "Scanning live feed for floating waste items...";
+    detectFrame();
+  } catch (err) {
+    statusBar.textContent = "Camera unavailable or permission denied. Switched to Table Demo Mode.";
+    toggleDemoMode();
+  }
+}
+
+async function detectFrame() {
+  if (!scanning || demoMode) return;
+  if (video.readyState === 4) {
+    overlay.width = video.videoWidth;
+    overlay.height = video.videoHeight;
+    const predictions = await model.detect(video);
+    ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+    predictions.forEach(pred => {
+      if (pred.class === "person" || pred.score < 0.5) return;
+      const [x, y, w, h] = pred.bbox;
+      const isWaste = WASTE_LABELS.has(pred.class);
+      ctx.strokeStyle = isWaste ? "#f59e0b" : "#2dd4bf";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(x, y, w, h);
+
+      const label = `${isWaste ? "TRASH" : "OBJECT"}: ${pred.class} (${Math.round(pred.score * 100)}%)`;
+      ctx.font = "bold 14px system-ui, sans-serif";
+      const textWidth = ctx.measureText(label).width;
+      ctx.fillStyle = isWaste ? "#f59e0b" : "#0d2736";
+      ctx.fillRect(x, Math.max(0, y - 24), textWidth + 12, 22);
+      ctx.fillStyle = isWaste ? "#111827" : "#ecfeff";
+      ctx.fillText(label, x + 6, Math.max(15, y - 8));
+
+      const key = `${pred.class}-${Math.round(x / 60)}-${Math.round(y / 60)}`;
+      if (isWaste && !seenKeys.has(key)) {
+        seenKeys.add(key);
+        spotted += 1;
+        playBeep();
+        addLog(pred.class, Math.round(pred.score * 100) + "%", "Live Camera Scan", "Spotted");
+        setTimeout(() => seenKeys.delete(key), 4000);
+      }
+    });
+  }
+  requestAnimationFrame(detectFrame);
+}
+
+function exportReport() {
+  const scoreText = document.getElementById("healthScore").textContent;
+  const lines = [
+    "AQUASCAN — SCIENCE PROJECT CLEANUP REPORT",
+    "-----------------------------------------",
+    "Total Items Spotted: " + spotted,
+    "Total Items Picked Up: " + collected,
+    "Water Body Health Score: " + scoreText,
+    "Logged Entries: " + logs.length,
+    ...logs.map((l, idx) => `${idx + 1}. [${l.time}] ${l.name} — ${l.status} (${l.zone}, ${l.confidence})`)
+  ];
+  const text = lines.join("
+");
+  document.getElementById("reportBox").value = text;
+
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "aquascan-cleanup-report.txt";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function resetLog() {
+  spotted = 0;
+  collected = 0;
+  logs = [];
+  seenKeys.clear();
+  tankSim.querySelectorAll(".trash-item").forEach(el => el.remove());
+  renderLogs();
+  updateStats();
+  document.getElementById("reportBox").value = "";
+  statusBar.textContent = "Log reset. Ready for a new scan.";
+}
+
+// Seed two initial demo items so the water tank looks alive right away
+spawnDemoTrash();
+spawnDemoTrash();
+</script>
+</body>
+</html>
