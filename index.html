@@ -496,8 +496,7 @@ function exportReport() {
     "Logged Entries: " + logs.length,
     ...logs.map((l, idx) => `${idx + 1}. [${l.time}] ${l.name} — ${l.status} (${l.zone}, ${l.confidence})`)
   ];
-  const text = lines.join("
-");
+  const text = lines.join("\n");
   document.getElementById("reportBox").value = text;
 
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
